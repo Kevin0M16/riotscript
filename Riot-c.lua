@@ -1,7 +1,19 @@
-Config = {1}
+Config = {
+    -- Hostile Peds toggle
+    HostilePeds = true,
+    -- Chaos Toggle
+    TotalChaos = false
+}
 
--- 0, just attack the player. 1, total chaos
-Config.HostilePeds = 1
+local PED_TASK_DECOR = "_PED_TASK"
+DecorRegister(PED_TASK_DECOR, 3)
+
+local PED_WEAPON_DECOR = "_PED_WEAPON"
+DecorRegister(PED_WEAPON_DECOR, 3)
+
+PLAYER_GROUP = GetHashKey('PLAYER')
+
+gl_peds = {}
 
 Config.RandomWeapons = {
 	"WEAPON_PISTOL", 
@@ -87,88 +99,91 @@ Config.RandomWeapons = {
 	"WEAPON_bow", 
 }
 
--- Experiement with Ped density. No impact.
---[[
-Config.PedDensity = 1
-
-Citizen.CreateThread(function()
-	while true do
-		Citizen.Wait(0)
-		SetPedDensityMultiplierThisFrame(Config.PedDensity)
-		SetScenarioPedDensityMultiplierThisFrame(Config.PedDensity,Config.PedDensity)
-	end
-end)
-]]--
-
-local relationshipTypes = {
-	"CIVMALE",
-	"CIVFEMALE",
-	"SECURITY_GUARD",
-	"PRIVATE_SECURITY",
-	"FIREMAN",
-	"MEDIC",
-	"GANG_1",
-	"GANG_2",
-	"GANG_9",
-	"GANG_10",
-	"AMBIENT_GANG_LOST",
-	"AMBIENT_GANG_MEXICAN",
-	"AMBIENT_GANG_FAMILY",
-	"AMBIENT_GANG_BALLAS",
-	"AMBIENT_GANG_MARABUNTE",
-	"AMBIENT_GANG_CULT",
-	"AMBIENT_GANG_SALVA",
-	"AMBIENT_GANG_WEICHENG",
-	"AMBIENT_GANG_HILLBILLY",
-	"DEALER",
-	"HATES_PLAYER",
-	"HEN",
-	"WILD_ANIMAL",
-	"SHARK",
-	"COUGAR",
-	"NO_RELATIONSHIP",
-	"SPECIAL",
-	"MISSION2",
-	"MISSION3",
-	"MISSION4",
-	"MISSION5",
-	"MISSION6",
-	"MISSION7",
-	"MISSION8",
-	"ARMY",
-	"GUARD_DOG",
-	"AGGRESSIVE_INVESTIGATE",
-	"CAT",
+local entityEnumerator = {
+    __gc = function(enum)
+      if enum.destructor and enum.handle then
+        enum.destructor(enum.handle)
+      end
+      enum.destructor = nil
+      enum.handle = nil
+    end
 }
+
+EntityEnum = {}
+
+--[[ ENTITY ITERATION STUFF ]]
+
+local function EnumerateEntities(initFunc, moveFunc, disposeFunc)
+    return coroutine.wrap(function()
+        local iter, id = initFunc()
+        if not id or id == 0 then
+          disposeFunc(iter)
+          return
+        end
+        
+        local enum = {handle = iter, destructor = disposeFunc}
+        setmetatable(enum, entityEnumerator)
+        
+        local next = true
+        repeat
+          coroutine.yield(id)
+          next, id = moveFunc(iter)
+        until not next
+        
+        enum.destructor, enum.handle = nil, nil
+        disposeFunc(iter)
+    end)
+end
+
+function EntityEnum.EnumeratePeds()
+  return EnumerateEntities(FindFirstPed, FindNextPed, EndFindPed)
+end
+
+function EntityEnum.EnumerateObjects()
+  return EnumerateEntities(FindFirstObject, FindNextObject, EndFindObject)
+end
+
+function EntityEnum.EnumerateVehicles()
+  return EnumerateEntities(FindFirstVehicle, FindNextVehicle, EndFindVehicle)
+end
+    
+function EntityEnum.EnumeratePickups()
+  return EnumerateEntities(FindFirstPickup, FindNextPickup, EndFindPickup)
+end
+  
+function GetDistanceBetweenCoords(pos1, pos2)
+    local distance = GetDistanceBetweenCoords(pos1.x, pos1.y, pos1.z, pos2.x, pos2.y, pos2.z, true)
+
+    return distance
+    --return math.abs(#pos1 - #pos2)
+end
 
 local RELATIONSHIP_HATE = 5
 local RELATIONSHIP_COMPANION = 0
 
-Citizen.CreateThread(function()
-	print('Starting Ped Loop')
-	while true do
-		Citizen.Wait(10)
-		for _, group in ipairs(relationshipTypes) do
-			SetRelationshipBetweenGroups(RELATIONSHIP_HATE, GetHashKey(group), GetHashKey('PLAYER'))
-			if Config.HostilePeds > 0 then
-				for _, group2 in ipairs(relationshipTypes) do
-					SetRelationshipBetweenGroups(RELATIONSHIP_HATE, GetHashKey(group), GetHashKey(group2))
-					SetRelationshipBetweenGroups(RELATIONSHIP_HATE, GetHashKey(group2), GetHashKey(group))
-				end
-			end
-		end
-		for Ped in EnumeratePeds() do
-			equipPed(Ped)
-		end
+function IsPedaPlayer(Ped)
+    local isPlayer = false
+
+    for _, playerId in ipairs(GetActivePlayers()) do
+        if GetPlayerPed(playerId) == ped then
+            isPlayer = true
+
+            break
+        end
     end
-end)
- 
+
+    return isPlayer
+end
+
 function equipPed(Ped)
 	-- Not a human, or the player? Ignore it.
 	if (not IsPedHuman(Ped)) or (GetPedRelationshipGroupDefaultHash(Ped)==GetHashKey('PLAYER') or GetPedRelationshipGroupHash(Ped)==GetHashKey('PLAYER')) or (GetBestPedWeapon(Ped,0)~=GetHashKey("WEAPON_UNARMED")) then 
 		return
 	end
-	local randomPedWeapon = Config.RandomWeapons[ math.random( #Config.RandomWeapons ) ]
+    local randomPedWeapon = Config.RandomWeapons[ math.random( #Config.RandomWeapons ) ]
+    
+    SetPedCombatAttributes(Ped, 0, false)
+
 	SetPedCombatAttributes(Ped, 5, true)	
 	SetPedCombatAttributes(Ped, 16, true)
 	SetPedCombatAttributes(Ped, 46, true)
@@ -178,10 +193,11 @@ function equipPed(Ped)
 	SetPedCombatAttributes(Ped, 3, false)
 	SetPedCombatAttributes(Ped, 52, true)
 	SetPedCombatAttributes(Ped, 0, true)
-	SetPedCombatAttributes(Ped, 20, true)
+    SetPedCombatAttributes(Ped, 20, true)
+
 	SetPedDiesWhenInjured(Ped, true)
 	SetPedAccuracy(Ped, 80)
-	GiveWeaponToPed(Ped, GetHashKey(randomPedWeapon), 2800, false, true)
+	GiveWeaponToPed(Ped, GetHashKey(randomPedWeapon), 2800, false, false)
 	SetPedInfiniteAmmo(Ped, true, randomPedWeapon)
 	SetPedFleeAttributes(Ped, 0, 0)
 	SetPedPathAvoidFire(Ped,1)
@@ -190,50 +206,129 @@ function equipPed(Ped)
 	SetPedPathCanUseClimbovers(Ped,1)
 	SetPedAlertness(Ped,3)
 	SetPedCombatRange(Ped,2)
-	SetPedAllowedToDuck(Ped,1)
+    SetPedAllowedToDuck(Ped,1)
+    
 	EnableDispatchService(3, false)
-	EnableDispatchService(5, false)
+    EnableDispatchService(5, false)
+    
 	if(randomPedWeapon == 0x42BF8A85) then
 		SetPedFiringPattern(Ped, 0x914E786F) --FIRING_PATTERN_BURST_FIRE_HELI
-	end
+    end
+    
 	ResetAiWeaponDamageModifier()
 	SetAiWeaponDamageModifier(0.3) -- 1.0 == Normal Damage. 
 	AddArmourToPed(Ped, 50) --<**is 100 max for npc???**
 	SetPedArmour(Ped, 50)
 end
 
-local entityEnumerator = {
-  __gc = function(enum)
-    if enum.destructor and enum.handle then
-      enum.destructor(enum.handle)
-    end
-    enum.destructor = nil
-    enum.handle = nil
-  end
-}
 
-local function EnumerateEntities(initFunc, moveFunc, disposeFunc)
-  return coroutine.wrap(function()
-    local iter, id = initFunc()
-    if not id or id == 0 then
-      disposeFunc(iter)
-      return
+Citizen.CreateThread(function()
+	if Config.HostilePeds then
+        print('Starting Crazy Ped Loop')
+
+        while true do
+            Citizen.Wait(250)
+            
+            local untilPause = 10
+
+            for ped, pedDat in pairs(gl_peds) do
+                if not DoesEntityExist(ped) or IsPedDeadOrDying(ped) then
+                    gl_peds[ped] = nil
+                elseif not IsPedaPlayer(ped) then
+                    local PedDec = DecorGetInt(Ped, PED_TASK_DECOR)
+
+                    if not Config.TotalChaos and PedDec ~= 3 then
+                        local relationshipGroup = pedDat.RelationshipGroup
+                    
+                        SetRelationshipBetweenGroups(5, PLAYER_GROUP, relationshipGroup)
+                        SetRelationshipBetweenGroups(5, relationshipGroup, PLAYER_GROUP)
+                        DecorSetInt(Ped, PED_TASK_DECOR, 3)
+                    end
+                end
+                
+                untilPause = untilPause - 1
+                if untilPause == 0 then
+                    untilPause = 10
+        
+                    Wait(0)
+                end
+            end
+            
+            for Ped in EntityEnum.EnumeratePeds() do
+                local isPlayer = relationshipGroup == PLAYER_GROUP
+                local relationshipGroup = GetPedRelationshipGroupHash(Ped)
+
+                if not IsPedaPlayer(Ped) then
+                    local PedEnumDec = DecorGetInt(Ped, PED_TASK_DECOR)
+                    local PedWeapDec = DecorGetInt(Ped, PED_WEAPON_DECOR)
+
+                    local pedType = GetPedType(Ped)
+
+                    if PedWeapDec == 0 then
+                        equipPed(Ped)
+
+                        DecorSetInt(Ped, PED_WEAPON_DECOR, 1)
+                    elseif not IsPedArmed(Ped, 7) then
+
+                        DecorSetInt(Ped, PED_WEAPON_DECOR, 0)
+                    end
+                    
+                    if PedEnumDec == 0 then
+                        for Ped2 in EntityEnum.EnumeratePeds() do
+                            local relationshipGroup2 = GetPedRelationshipGroupHash(Ped2)                
+                            
+                            if Config.TotalChaos then
+                                SetRelationshipBetweenGroups(RELATIONSHIP_HATE, relationshipGroup, relationshipGroup2)
+                                SetRelationshipBetweenGroups(RELATIONSHIP_HATE, relationshipGroup2, relationshipGroup)
+                                DecorSetInt(Ped, PED_TASK_DECOR, 1)                                
+                            else
+                                SetRelationshipBetweenGroups(RELATIONSHIP_COMPANION, relationshipGroup, relationshipGroup2)
+                                SetRelationshipBetweenGroups(RELATIONSHIP_COMPANION, relationshipGroup2, relationshipGroup)
+                                DecorSetInt(Ped, PED_TASK_DECOR, 2) 
+                            end                
+                        end                        
+                    end
+                end
+                
+                gl_peds[Ped] = {
+                    IsPlayer = isPlayer,
+                    RelationshipGroup = relationshipGroup
+                }
+
+                untilPause = untilPause - 1
+                if untilPause < 0 then
+                    untilPause = 10
+
+                    Wait(0)
+                end
+            end
+        end
     end
-    
-    local enum = {handle = iter, destructor = disposeFunc}
-    setmetatable(enum, entityEnumerator)
-    
-    local next = true
-    repeat
-      coroutine.yield(id)
-      next, id = moveFunc(iter)
-    until not next
-    
-    enum.destructor, enum.handle = nil, nil
-    disposeFunc(iter)
-  end)
+end)
+
+--Shows a notification on the player's screen 
+function ShowNotification( text )
+    SetNotificationTextEntry("STRING")
+    AddTextComponentSubstringPlayerName(text)
+    DrawNotification(false, false)
 end
 
-function EnumeratePeds()
-  return EnumerateEntities(FindFirstPed, FindNextPed, EndFindPed)
-end
+RegisterCommand('chaos', function()
+    if Config.TotalChaos then
+        Config.TotalChaos = false
+        ShowNotification("~g~[Debug] Total Chaos OFF")
+	else
+        Config.TotalChaos = true
+        ShowNotification("~r~[Debug] Total Chaos ON")
+	end
+end, false)
+
+RegisterCommand('hostile', function()
+    if Config.TotalChaos then
+        Config.TotalChaos = false
+        ShowNotification("~g~[Debug] Hostile Peds OFF")
+	else
+        Config.TotalChaos = true
+        ShowNotification("~r~[Debug] Hostile Peds ON")
+	end
+end, false)
